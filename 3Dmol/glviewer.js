@@ -30,6 +30,8 @@ $3Dmol.GLViewer = (function() {
         if(typeof(config.backgroundColor) != undefined) {
             bgColor = $3Dmol.CC.color(config.backgroundColor).getHex();
         }
+        config.backgroundAlpha = config.backgroundAlpha == undefined ? 1.0 : config.backgroundAlpha;
+        
 
         var camerax = 0;
         if(typeof(config.camerax) != undefined) {
@@ -248,7 +250,7 @@ $3Dmol.GLViewer = (function() {
         };
 
         initializeScene();
-        renderer.setClearColorHex(bgColor, 1.0);
+        renderer.setClearColorHex(bgColor, config.backgroundAlpha);
         scene.fog.color = $3Dmol.CC.color(bgColor);
 
         var clickedAtom = null;
@@ -271,9 +273,15 @@ $3Dmol.GLViewer = (function() {
                     let hoverable_atoms = model.selectedAtoms({
                         hoverable : true
                     });
-                    Array.prototype.push.apply(hoverables,hoverable_atoms);
+                    // Array.prototype.push.apply(hoverables,hoverable_atoms);
+                    for (let n = 0; n < hoverable_atoms.length; n++) {
+                        hoverables.push(hoverable_atoms[n]);
+                    }
 
-                    Array.prototype.push.apply(clickables, atoms); //add atoms into clickables
+                    // Array.prototype.push.apply(clickables, atoms); //add atoms into clickables
+                    for (let m = 0; m < atoms.length; m++) {
+                        clickables.push(atoms[m]);
+                    }
                     
                 }
             }
@@ -337,11 +345,11 @@ $3Dmol.GLViewer = (function() {
             }
             
             let results = [];
+            let offset = canvasOffset();
             coords.forEach(coord => {
                 let t = new $3Dmol.Vector3(coord.x,coord.y,coord.z);
                 t.applyMatrix4(modelGroup.matrixWorld);   
                 projector.projectVector(t, camera);       
-                let offset = canvasOffset();
                 let screenX = WIDTH*(t.x+1)/2.0+offset.left;
                 let screenY = -HEIGHT*(t.y-1)/2.0+offset.top;
                 results.push({x:screenX,y:screenY});
@@ -471,7 +479,29 @@ $3Dmol.GLViewer = (function() {
             t.z = 0;                            
             t.applyQuaternion(q);
             return t;
-        };                
+        };
+        
+        /**
+         * Distance from screen coordinate to model coordinate assuming screen point
+         * is projected to the same depth as model coordinate
+         * @param{screen} xy screen coordinate
+         * @param{model} xyz model coordinate
+         * @function $3Dmol.GLViewer#screenToModelDistance
+        */   
+        this.screenToModelDistance = function(screen,model) {
+            let offset = canvasOffset();
+            
+            //convert model to screen to get screen z                     
+            let mvec = new $3Dmol.Vector3(model.x,model.y,model.z);
+            mvec.applyMatrix4(modelGroup.matrixWorld);   
+            let m = mvec.clone();
+            projector.projectVector(mvec, camera);
+            
+            let t = new $3Dmol.Vector3((screen.x-offset.left)*2/WIDTH-1,(screen.y-offset.top)*2/-HEIGHT+1,mvec.z);
+            projector.unprojectVector(t, camera);
+            
+            return t.distanceTo(m);
+        };                         
         
         //for grid viewers, return true if point is in this viewer
         var isInViewer = function(x,y) {
@@ -1922,48 +1952,55 @@ $3Dmol.GLViewer = (function() {
          */
         this.zoomTo = function(sel, animationDuration,fixedPath) {
             animationDuration=animationDuration!==undefined ? animationDuration : 0;
-            var allatoms, alltmp;
             sel = sel || {};
-            var atoms = getAtomsFromSel(sel);
-            var tmp = $3Dmol.getExtent(atoms);
+            let atoms = getAtomsFromSel(sel);
+            let atombox = $3Dmol.getExtent(atoms);
+            let allbox = atombox;
 
             if($3Dmol.isEmptyObject(sel)) {
                 //include shapes when zooming to full scene
                 //TODO: figure out a good way to specify shapes as part of a selection
+                let natoms = atoms && atoms.length;
                 shapes.forEach((shape) => {
-                if(shape && shape.boundingSphere && shape.boundingSphere.center) {
-                    var c = shape.boundingSphere.center;
-                    var r = shape.boundingSphere.radius;
-                    if(r > 0) {
-                        //make sure full shape is visible
-                            atoms.push(new $3Dmol.Vector3(c.x+r,c.y,c.z));
-                            atoms.push(new $3Dmol.Vector3(c.x-r,c.y,c.z));
-                            atoms.push(new $3Dmol.Vector3(c.x,c.y+r,c.z));
-                            atoms.push(new $3Dmol.Vector3(c.x,c.y-r,c.z));
-                            atoms.push(new $3Dmol.Vector3(c.x,c.y,c.z+r));
-                            atoms.push(new $3Dmol.Vector3(c.x,c.y,c.z-r));
-                    } else {
-                            atoms.push(c);
+                if(shape && shape.boundingSphere) {
+                    if(shape.boundingSphere.box) {
+                        let box = shape.boundingSphere.box;
+                        atoms.push(new $3Dmol.Vector3(box.min.x,box.min.y,box.min.z));
+                        atoms.push(new $3Dmol.Vector3(box.max.x,box.max.y,box.max.z));                        
+                    } else if(shape.boundingSphere.center) {
+                        var c = shape.boundingSphere.center;
+                        var r = shape.boundingSphere.radius;
+                        if(r > 0) {
+                            //make sure full shape is visible
+                                atoms.push(new $3Dmol.Vector3(c.x+r,c.y,c.z));
+                                atoms.push(new $3Dmol.Vector3(c.x-r,c.y,c.z));
+                                atoms.push(new $3Dmol.Vector3(c.x,c.y+r,c.z));
+                                atoms.push(new $3Dmol.Vector3(c.x,c.y-r,c.z));
+                                atoms.push(new $3Dmol.Vector3(c.x,c.y,c.z+r));
+                                atoms.push(new $3Dmol.Vector3(c.x,c.y,c.z-r));
+                        } else {
+                                atoms.push(c);
+                        }
                     }
                   }
                 });
-                tmp = $3Dmol.getExtent(atoms);
-                allatoms = atoms;
-                alltmp = tmp;
-
-            }
-            else {
-                allatoms = getAtomsFromSel({});
-                alltmp = $3Dmol.getExtent(allatoms);
+                allbox = $3Dmol.getExtent(atoms);
+                if(!natoms) { //if no atoms, use shapes for center
+                    for(let i = 0; i < 3; i++) { //center of bounding box
+                        atombox[2][i] = (allbox[0][i]+allbox[1][i])/2; 
+                     }
+                }
+            } else { //include all atoms in slab calculation
+                let allatoms = getAtomsFromSel({});
+                allbox = $3Dmol.getExtent(allatoms);  
             }
 
             // use selection for center
-            var center = new $3Dmol.Vector3(tmp[2][0], tmp[2][1], tmp[2][2]);
-
+            var center = new $3Dmol.Vector3(atombox[2][0], atombox[2][1], atombox[2][2]);
             
             // but all for bounding box
-            var x = alltmp[1][0] - alltmp[0][0], y = alltmp[1][1]
-                    - alltmp[0][1], z = alltmp[1][2] - alltmp[0][2];
+            var x = allbox[1][0] - allbox[0][0], y = allbox[1][1]
+                    - allbox[0][1], z = allbox[1][2] - allbox[0][2];
 
             var maxD = Math.sqrt(x * x + y * y + z * z);
             if (maxD < 5)
@@ -1982,9 +2019,9 @@ $3Dmol.GLViewer = (function() {
             // keep at least this much space in view
             var MAXD = config.minimumZoomToDistance || 5;
             // for zoom, use selection box
-            x = tmp[1][0] - tmp[0][0];
-            y = tmp[1][1] - tmp[0][1];
-            z = tmp[1][2] - tmp[0][2];
+            x = atombox[1][0] - atombox[0][0];
+            y = atombox[1][1] - atombox[0][1];
+            z = atombox[1][2] - atombox[0][2];
             maxD = Math.sqrt(x * x + y * y + z * z);           
             if (maxD < MAXD)
                 maxD = MAXD;
@@ -2116,7 +2153,7 @@ $3Dmol.GLViewer = (function() {
          * * @example  
              $3Dmol.download("mmtf:2ll5",viewer,{},function(){
                   viewer.setStyle({stick:{radius:0.15},cartoon:{}});
-                  viewer.addResLabels({hetflag:false}, {font: 'Arial', fontColor:'black',showBackground:false});
+                  viewer.addResLabels({hetflag:false}, {font: 'Arial', fontColor:'black',showBackground:false, screenOffset: {x:0,y:0}});
                   viewer.zoomTo();
                   viewer.render();                  
                 });
@@ -2628,8 +2665,15 @@ $3Dmol.GLViewer = (function() {
                                 new $3Dmol.Vector3(1, 0, 1),
                                 new $3Dmol.Vector3(1, 1, 1)  ];
                             
-                for (var i = 0; i < points.length; i++) {
-                    points[i] = points[i].applyMatrix3(matrix);
+                if(data.matrix4) {
+                    for (let i = 0; i < points.length; i++) {
+                        if(data.size) points[i].multiplyVectors(points[i],data.size); //matrix is for unit vectors, not whole box
+                        points[i] = points[i].applyMatrix4(data.matrix4);
+                    }
+                } else {
+                    for (let i = 0; i < points.length; i++) {
+                        points[i] = points[i].applyMatrix3(matrix);
+                    }
                 }
             
                 //draw box
@@ -4176,6 +4220,16 @@ $3Dmol.GLViewer = (function() {
         *  @function $3Dmol.GLViewer#setSurfaceMaterialStyle
          * @param {number} surf - Surface ID to apply changes to
          * @param {SurfaceStyleSpec} style - new material style specification
+         @example
+         $.get("data/9002806.cif",function(data){
+            viewer.addModel(data);
+            viewer.setStyle({stick:{}});
+            let surf = viewer.addSurface("SAS");
+            surf.then(function() {
+                viewer.setSurfaceMaterialStyle(surf.surfid, {color:'blue',opacity:0.5});
+                viewer.render();
+                });
+           });
          */ 
         this.setSurfaceMaterialStyle = function(surf, style) {
             $3Dmol.adjustVolumeStyle(style);
